@@ -23,12 +23,10 @@ DOMAIN = 'jits_history'
 CONF_CLIENTS = 'clients'
 CONF_CONNECTION_KEY = 'connection_key'
 CONF_AES_KEY = 'aes_key'
-CONF_AES_IV = 'aes_iv'
 
 CLIENT_SCHEMA = vol.Schema({
     vol.Required(CONF_CONNECTION_KEY): cv.string,
     vol.Required(CONF_AES_KEY): cv.string,
-    vol.Required(CONF_AES_IV): cv.string,
     vol.Required(CONF_WHITELIST): vol.Schema({cv.entity_id: cv.string}),
 })
 
@@ -45,31 +43,56 @@ def setup(hass, config):
     """Set up the JITS history component."""
     conf = config[DOMAIN]
 
-    def send_data(url, connection_key, aes_key, aes_iv, data_str):
+    def get_aes_iv(url, connection_key):
+        generator_url = "{}/generatorIV.php".format(url)
+        parameters = {'con': connection_key}
+        try:
+            req = requests.post(generator_url, params=parameters,
+                                allow_redirects=True, timeout=5)
+
+        except requests.exceptions.RequestException:
+            _LOGGER.error("Error getting IV from %s", generator_url)
+        else:
+            if req.status_code != 200:
+                _LOGGER.error(
+                    "Error getting IV from %s for connection_key %s (%d:%s)",
+                    generator_url, connection_key, req.status_code,
+                    req.content)
+                return ''
+
+        return base64.b64decode(req.content, validate=True)
+
+    def send_data(url, connection_key, aes_key, data_str):
         """Send payload data to JITS."""
 
+        publisher_url = "{}/publisher.php".format(url)
+
+        aes_iv = get_aes_iv(url, connection_key)
+        if len(aes_iv) == 0:
+            return
+
+        encrypter = AES.new(aes_key.encode(), AES.MODE_CBC, aes_iv)
+
+        json_bytes = data_str.encode('utf-8')
+        length = 16 - (len(json_bytes) % 16)
+        json_bytes += bytes([0]) * length  # add \x00 for padding
+        encripted_data = encrypter.encrypt(json_bytes)
+
+        parameters = {'con': connection_key}
+
         try:
-            encrypter = AES.new(aes_key.encode(), AES.MODE_CBC,
-                                base64.b64decode(aes_iv))
-
-            json_bytes = data_str.encode('utf-8')
-            length = 16 - (len(json_bytes) % 16)
-            json_bytes += bytes([0]) * length  # add \x00 for padding
-            encripted_data = encrypter.encrypt(json_bytes)
-
-            parameters = {'con': connection_key}
-            req = requests.post(url, params=parameters,
+            req = requests.post(publisher_url, params=parameters,
                                 data=base64.b64encode(encripted_data),
                                 allow_redirects=True, timeout=5)
 
         except requests.exceptions.RequestException:
-            _LOGGER.error("Error saving data '%s' to '%s'", data_str, url)
-
+            _LOGGER.error("Error saving data '%s' to %s for connection_key %s",
+                          data_str, publisher_url, connection_key)
         else:
-            if req.status_code != 200 and req.status_code != 201:
-                _LOGGER.error(
-                    "Error saving data %s to %s (http status code = %d)",
-                    data_str, url, req.status_code)
+            if req.status_code != 200:
+                _LOGGER.error("Error saving data '%s' to %s for connection_key"
+                              " %s (%d:%s)", data_str, publisher_url,
+                              connection_key, req.status_code, req.content)
 
     def update_client(url, client_conf):
         data_dict = {}
@@ -93,8 +116,7 @@ def setup(hass, config):
                                          for key, val in data_dict.items())
 
             send_data(url, client_conf.get(CONF_CONNECTION_KEY),
-                      client_conf.get(CONF_AES_KEY),
-                      client_conf.get(CONF_AES_IV), data_str)
+                      client_conf.get(CONF_AES_KEY), data_str)
 
     def update(time):
         """Iterate trough each client and send whitelisted entities to JITS."""
