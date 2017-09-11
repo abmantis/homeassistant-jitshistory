@@ -52,6 +52,7 @@ def setup(hass, config):
 
         except requests.exceptions.RequestException:
             _LOGGER.error("Error getting IV from %s", generator_url)
+            return ''
         else:
             if req.status_code != 200:
                 _LOGGER.error(
