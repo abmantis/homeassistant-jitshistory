@@ -61,7 +61,14 @@ def setup(hass, config):
                     req.content)
                 return ''
 
-        return base64.b64decode(req.content, validate=True)
+        try:
+            return base64.b64decode(req.content, validate=True)
+        except binascii.Error:
+            _LOGGER.error(
+                "Error decoding IV for connection_key %s (%d:%s)",
+                connection_key, req.status_code, req.content)
+
+        return ''
 
     def send_data(url, connection_key, aes_key, data_str):
         """Send payload data to JITS."""
