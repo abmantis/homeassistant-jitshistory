@@ -1,7 +1,7 @@
 # Home Assistant component for the JSON IoT Server (https://github.com/luisfog/jits)
 
 ## Example configuration:
-**IMPORTANT:** Don't use spaces and special chars as names
+
 ~~~
 jits_history:
   url: 'https://your_jits_server.com/publisher.php'
