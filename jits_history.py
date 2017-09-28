@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from Crypto.Cipher import AES
 import base64
+import binascii
 import requests
 import voluptuous as vol
 
