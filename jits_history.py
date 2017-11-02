@@ -52,11 +52,11 @@ def setup(hass, config):
                                 allow_redirects=True, timeout=5)
 
         except requests.exceptions.RequestException:
-            _LOGGER.error("Error getting IV from %s", generator_url)
+            _LOGGER.debug("Error getting IV from %s", generator_url)
             return ''
         else:
             if req.status_code != 200:
-                _LOGGER.error(
+                _LOGGER.debug(
                     "Error getting IV from %s for connection_key %s (%d:%s)",
                     generator_url, connection_key, req.status_code,
                     req.content)
@@ -65,7 +65,7 @@ def setup(hass, config):
         try:
             return base64.b64decode(req.content, validate=True)
         except binascii.Error:
-            _LOGGER.error(
+            _LOGGER.debug(
                 "Error decoding IV for connection_key %s (%d:%s)",
                 connection_key, req.status_code, req.content)
 
