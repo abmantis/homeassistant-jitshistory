@@ -94,6 +94,9 @@ def setup(hass, config):
                                 data=base64.b64encode(encripted_data),
                                 allow_redirects=True, timeout=5)
 
+        except requests.exceptions.ReadTimeout:
+            _LOGGER.error("Error saving data '%s' to %s for connection_key %s (timeout)",
+                          data_str, publisher_url, connection_key)
         except requests.exceptions.RequestException:
             _LOGGER.error("Error saving data '%s' to %s for connection_key %s",
                           data_str, publisher_url, connection_key)
