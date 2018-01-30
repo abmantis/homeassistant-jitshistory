@@ -51,8 +51,11 @@ def setup(hass, config):
             req = requests.post(generator_url, params=parameters,
                                 allow_redirects=True, timeout=5)
 
+        except requests.exceptions.ConnectionError:
+            _LOGGER.debug("Connection error getting IV from %s", generator_url)
+            return ''
         except requests.exceptions.RequestException:
-            _LOGGER.debug("Error getting IV from %s", generator_url)
+            _LOGGER.debug("Request error getting IV from %s", generator_url)
             return ''
         else:
             if req.status_code != 200:
