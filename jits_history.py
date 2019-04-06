@@ -1,6 +1,7 @@
 """
 A component which allows you to send data to JSON IoT Server.
 """
+import aiohttp
 import logging
 from datetime import timedelta
 
@@ -15,6 +16,7 @@ from homeassistant.const import (
     CONF_WHITELIST, CONF_URL, STATE_UNKNOWN, STATE_UNAVAILABLE,
     CONF_SCAN_INTERVAL)
 from homeassistant.helpers import state as state_helper
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import track_point_in_time
 from homeassistant.util import dt as dt_util
 
@@ -40,37 +42,39 @@ CONFIG_SCHEMA = vol.Schema({
 }, extra=vol.ALLOW_EXTRA)
 
 
-def setup(hass, config):
+@asyncio.coroutine
+def async_setup(hass, config):
     """Set up the JITS history component."""
     conf = config[DOMAIN]
 
     def get_aes_iv(url, connection_key):
         generator_url = "{}/generatorIV.php".format(url)
         parameters = {'con': connection_key}
-        try:
-            req = requests.post(generator_url, params=parameters,
-                                allow_redirects=True, timeout=5)
-
-        except requests.exceptions.ConnectionError:
-            _LOGGER.debug("Connection error getting IV from %s", generator_url)
-            return ''
-        except requests.exceptions.RequestException:
-            _LOGGER.debug("Request error getting IV from %s", generator_url)
-            return ''
-        else:
-            if req.status_code != 200:
-                _LOGGER.debug(
-                    "Error getting IV from %s for connection_key %s (%d:%s)",
-                    generator_url, connection_key, req.status_code,
-                    req.content)
-                return ''
 
         try:
-            return base64.b64decode(req.content, validate=True)
+            session = async_get_clientsession(hass)
+            with async_timeout.timeout(DEFAULT_TIMEOUT, loop=hass.loop):
+                req = yield from session.post(generator_url, data=parameters,
+                                              timeout=10)
+
+        except (asyncio.TimeoutError, aiohttp.ClientError):
+            _LOGGER.debug("Error getting IV from %s", generator_url)
+            return ''
+
+        content = yield from req.text()
+
+        if req.status != 200:
+            _LOGGER.debug(
+                "Error getting IV from %s for connection_key %s (%d:%s)",
+                generator_url, connection_key, req.status, content)
+            return ''
+
+        try:
+            return base64.b64decode(content, validate=True)
         except binascii.Error:
             _LOGGER.debug(
                 "Error decoding IV for connection_key %s (%d:%s)",
-                connection_key, req.status_code, req.content)
+                connection_key, req.status, content)
 
         return ''
 
@@ -93,21 +97,25 @@ def setup(hass, config):
         parameters = {'con': connection_key}
 
         try:
-            req = requests.post(publisher_url, params=parameters,
-                                data=base64.b64encode(encripted_data),
-                                allow_redirects=True, timeout=5)
+            session = async_get_clientsession(hass)
+            with async_timeout.timeout(DEFAULT_TIMEOUT, loop=hass.loop):
+                req = yield from session.post(publisher_url, params=parameters,
+                                              data=base64.b64encode(
+                                                  encripted_data),
+                                              timeout=10)
 
-        except requests.exceptions.ReadTimeout:
-            _LOGGER.error("Error saving data '%s' to %s for connection_key %s (timeout)",
-                          data_str, publisher_url, connection_key)
-        except requests.exceptions.RequestException:
-            _LOGGER.error("Error saving data '%s' to %s for connection_key %s",
-                          data_str, publisher_url, connection_key)
+        except (asyncio.TimeoutError, aiohttp.ClientError):
+            _LOGGER.error("Error saving data '%s' to %s for connection_key %s "
+                          "(timeout)", data_str, publisher_url, connection_key)
+            return ''
+        except Exception as ex:
+            _LOGGER.error("??? %s    >    %s", type(ex).__name__, ex)
         else:
             if req.status_code != 200:
+                content = yield from req.text()
                 _LOGGER.error("Error saving data '%s' to %s for connection_key"
                               " %s (%d:%s)", data_str, publisher_url,
-                              connection_key, req.status_code, req.content)
+                              connection_key, req.status, content)
 
     def update_client(url, client_conf):
         data_dict = {}
@@ -133,13 +141,14 @@ def setup(hass, config):
             send_data(url, client_conf.get(CONF_CONNECTION_KEY),
                       client_conf.get(CONF_AES_KEY), data_str)
 
-    def update(time):
+    @asyncio.coroutine
+    def async_update(time):
         """Iterate trough each client and send whitelisted entities to JITS."""
         for client_conf in conf.get(CONF_CLIENTS):
             update_client(conf.get(CONF_URL), client_conf)
 
-        track_point_in_time(hass, update, time +
-                            timedelta(seconds=conf.get(CONF_SCAN_INTERVAL)))
+        async_track_point_in_time(hass, async_update, time + timedelta(
+            seconds=conf.get(CONF_SCAN_INTERVAL)))
 
-    update(dt_util.utcnow())
+    yield from update(dt_util.utcnow())
     return True
